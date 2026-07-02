@@ -1,45 +1,48 @@
-# contracts/adventureworks/orders.yml
-#
-# Data contract for the AdventureWorks orders source.
-# This contract is used by incident response, observability, CI validation,
-# and downstream ownership routing.
-
 dataset: adventureworks.orders
 environment: prod
+catalog: ibm-knowledge-catalog
+classification: certified-data-product
+criticality: high
 
 owners:
   business_owner: finance-analytics
   technical_owner: data-platform
+  governance_owner: data-governance
   escalation_channel: "#data-platform-oncall"
 
+source:
+  system: AdventureWorks
+  ingestion_product: ibm-datastage
+  optional_replication_product: ibm-data-replication
+  pipeline: datastage/adventureworks_ingest
+
+target:
+  warehouse: ibm-db2-warehouse
+  database: IBM_STACK_1_BRONZE
+  schema: ADVENTUREWORKS
+  table: ORDERS
+
 freshness:
-  loaded_at_field: _fivetran_synced
+  loaded_at_field: ingestion_timestamp
   warn_after: 1 hour
   error_after: 2 hours
   severity: high
 
 access_policy:
-  warehouse: snowflake
-  database: AWS_STACK_1_BRONZE
+  warehouse: ibm-db2-warehouse
+  database: IBM_STACK_1_BRONZE
   schema: ADVENTUREWORKS
-  connector: fivetran/adventureworks
-  connector_role: FIVETRAN_ADVENTUREWORKS_ROLE
+  service_account: SVC_DATASTAGE_ADVENTUREWORKS
   required_privileges:
-    - privilege: USAGE
-      granted_on: DATABASE
-      name: AWS_STACK_1_BRONZE
-    - privilege: USAGE
-      granted_on: SCHEMA
-      name: AWS_STACK_1_BRONZE.ADVENTUREWORKS
-    - privilege: CREATE TABLE
-      granted_on: SCHEMA
-      name: AWS_STACK_1_BRONZE.ADVENTUREWORKS
-    - privilege: CREATE STAGE
-      granted_on: SCHEMA
-      name: AWS_STACK_1_BRONZE.ADVENTUREWORKS
-    - privilege: CREATE FILE FORMAT
-      granted_on: SCHEMA
-      name: AWS_STACK_1_BRONZE.ADVENTUREWORKS
+    - CONNECT_ON_DATABASE
+    - CREATEIN_ON_SCHEMA
+    - ALTERIN_ON_SCHEMA
+    - SELECT_ON_ORDERS
+    - INSERT_ON_ORDERS
+    - UPDATE_ON_ORDERS
+    - DELETE_ON_ORDERS
+    - SELECT_ON_CUSTOMERS
+    - SELECT_ON_SALES
 
 schema:
   fields:
@@ -66,27 +69,34 @@ schema:
       description: Current lifecycle status of the order.
 
     - name: order_total
-      type: numeric
+      type: decimal
+      precision: 18
+      scale: 2
       required: true
+      min_value: 0
       description: Total monetary value of the order.
 
-    - name: _fivetran_synced
+    - name: order_date
       type: timestamp
       required: true
-      description: Timestamp indicating when Fivetran last synced the row.
+      description: Timestamp when the order was placed.
+
+    - name: ingestion_timestamp
+      type: timestamp
+      required: true
+      description: Timestamp when the record was loaded into Db2 Warehouse.
 
 lineage:
+  product: ibm-manta-data-lineage
   upstream:
-    system: AdventureWorks
-    connector: fivetran/adventureworks
-    destination:
-      warehouse: snowflake
-      database: AWS_STACK_1_BRONZE
-      schema: ADVENTUREWORKS
+    - system: AdventureWorks
+      object: Sales.Orders
+    - system: ibm-datastage
+      object: datastage/adventureworks_ingest
 
-  downstream_models:
-    - stg_adventureworks__orders
-    - stg_adventureworks__customers
+  downstream_transformations:
+    - stg_adventureworks_orders
+    - stg_adventureworks_customers
     - int_sales_order_enriched
     - fct_sales
     - dim_customer
@@ -97,7 +107,21 @@ lineage:
     - Customer Retention Dashboard
     - Finance Close Monitoring Dashboard
 
-risk:
-  severity: high
-  business_impact: Revenue, sales, and customer reporting may be stale or incomplete.
-  operational_impact: Permission regressions may cause repeated ingestion failures if not validated in CI.
+observability:
+  product: ibm-databand
+  monitored_checks:
+    - freshness_adventureworks_orders
+    - row_count_anomaly_orders
+    - schema_contract_adventureworks_orders
+    - referential_integrity_sales_customer
+
+governance:
+  product: ibm-watsonx-governance
+  certified_metric_dependencies:
+    - daily_revenue
+    - gross_sales
+    - customer_retention_rate
+  risk:
+    severity: high
+    business_impact: Revenue and customer reporting may be stale or incomplete.
+    governance_impact: Certified business metrics may be generated from data that does not meet declared freshness expectations.

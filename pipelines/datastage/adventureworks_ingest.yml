@@ -1,0 +1,78 @@
+pipeline: datastage/adventureworks_ingest
+runtime: ibm-datastage
+environment: prod
+criticality: high
+
+description: >
+  Loads AdventureWorks orders, customers, and sales source data into the
+  IBM Db2 Warehouse bronze layer for downstream analytics and reporting.
+
+source:
+  system: AdventureWorks
+  connection: adventureworks_prod
+  objects:
+    - orders
+    - customers
+    - sales
+
+target:
+  system: ibm-db2-warehouse
+  connection: db2_warehouse_prod
+  database: IBM_STACK_1_BRONZE
+  schema: ADVENTUREWORKS
+  tables:
+    - ORDERS
+    - CUSTOMERS
+    - SALES
+
+service_account: SVC_DATASTAGE_ADVENTUREWORKS
+
+schedule:
+  cadence: hourly
+  freshness_sla: 2 hours
+
+contract:
+  product: ibm-knowledge-catalog
+  path: contracts/adventureworks/orders.yml
+
+quality:
+  checks_path: quality/adventureworks/checks.yml
+  required_checks:
+    - freshness_adventureworks_orders
+    - not_null_orders_order_id
+    - unique_orders_order_id
+    - row_count_anomaly_orders
+    - referential_integrity_sales_customer
+
+observability:
+  product: ibm-databand
+  owner: data-platform
+  escalation_channel: "#data-platform-oncall"
+  severity_on_job_failure: high
+  severity_on_freshness_breach: high
+  include_error_logs: true
+  include_failed_stage: true
+  include_recommended_remediation: true
+
+lineage:
+  product: ibm-manta-data-lineage
+  downstream_assets:
+    - stg_adventureworks_orders
+    - stg_adventureworks_customers
+    - int_sales_order_enriched
+    - fct_sales
+    - dim_customer
+    - Executive Revenue Dashboard
+    - Daily Sales Performance Dashboard
+    - Customer Retention Dashboard
+    - Finance Close Monitoring Dashboard
+
+governance:
+  product: ibm-watsonx-governance
+  certified_data_product: true
+  affected_certified_metrics:
+    - daily_revenue
+    - gross_sales
+    - customer_retention_rate
+
+runbook: runbooks/ibm_datastage_db2_privilege_failure.md

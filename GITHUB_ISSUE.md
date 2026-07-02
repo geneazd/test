@@ -1,47 +1,50 @@
-# [SEV-2][DQ Incident] AdventureWorks ingestion blocked by Snowflake privilege regression
+# [SEV-2][DQ Incident] AdventureWorks ingestion blocked by IBM Db2 Warehouse privilege regression
 
 ## Summary
 
-The `adventureworks` Fivetran connector failed to sync into Snowflake because its service role no longer had sufficient privileges on the `AWS_STACK_1_BRONZE` database.
+The `adventureworks` ingestion pipeline failed to load data into IBM Db2 Warehouse because the IBM DataStage service account no longer had sufficient privileges on the `IBM_STACK_1_BRONZE` database and `ADVENTUREWORKS` schema.
 
-This caused stale source data, failed data quality checks, and downstream impact across sales, customer, finance, and executive reporting assets.
+This caused stale bronze-layer source data, failed data quality checks, and downstream impact across sales, customer, finance, and executive reporting assets.
 
 Detected incident: `PTM-198`  
 Severity: `SEV-2`  
 Environment: `production`  
-Primary system boundary: `Fivetran → Snowflake`
+Primary system boundary: `IBM DataStage → IBM Db2 Warehouse`
 
 ---
 
 ## What happened?
 
-The `adventureworks` ingestion job failed during sync with a Snowflake access control error.
+The `adventureworks` ingestion job failed during execution in IBM DataStage with an IBM Db2 Warehouse authorization error.
 
 ```text
-SQL access control error:
-Insufficient privileges to operate on database 'AWS_STACK_1_BRONZE'
+SQL0551N:
+The statement failed because the authorization ID does not have the required authorization or privilege to perform the operation on object "IBM_STACK_1_BRONZE.ADVENTUREWORKS".
 ```
 
-Because the bronze layer was not refreshed, downstream dbt models and dashboards continued to use stale source data.
+Because the bronze layer was not refreshed, downstream transformation jobs and reporting assets continued to use stale source data.
+
+The incident was detected through IBM Databand observability alerts and correlated with metadata from IBM Knowledge Catalog and lineage from IBM Manta Data Lineage.
 
 ---
 
 ## Why did it happen?
 
-The Snowflake role used by the Fivetran connector, `FIVETRAN_ADVENTUREWORKS_ROLE`, was missing required privileges on the destination database and schema.
+The IBM DataStage runtime service account, `SVC_DATASTAGE_ADVENTUREWORKS`, was missing required privileges on the target IBM Db2 Warehouse database and schema.
 
 Likely root cause:
 
 ```text
-A recent Snowflake role cleanup, permission refactor, or manual grant change removed privileges required by the AdventureWorks connector.
+A recent database role cleanup, access policy change, or manual privilege update removed required grants from the AdventureWorks ingestion service account.
 ```
 
 Contributing factors:
 
-- Required Snowflake grants were not fully managed in version control.
-- CI did not validate connector permissions before deployment.
-- The data contract defined freshness expectations but did not explicitly enforce required warehouse access.
-- Observability detected the failure, but the incident did not automatically map to the owning repo, grant file, and remediation path.
+- Required IBM Db2 Warehouse privileges were not fully managed in version control.
+- CI did not validate ingestion service account permissions before deployment.
+- The data contract in IBM Knowledge Catalog defined freshness expectations but did not explicitly enforce required warehouse access.
+- IBM Databand detected the failed ingestion job, but remediation was not automatically mapped to the owning repository, grant file, and service account.
+- IBM Manta Data Lineage showed downstream impact, but the blast radius was not attached directly to the remediation workflow.
 
 ---
 
@@ -50,11 +53,15 @@ Contributing factors:
 | Field | Value |
 |---|---|
 | Source system | `AdventureWorks` |
-| Connector | `fivetran/adventureworks` |
-| Warehouse | `Snowflake` |
-| Database | `AWS_STACK_1_BRONZE` |
+| Ingestion product | `IBM DataStage` |
+| Optional replication product | `IBM Data Replication` |
+| Target warehouse | `IBM Db2 Warehouse` |
+| Catalog / contract | `IBM Knowledge Catalog` |
+| Observability | `IBM Databand` |
+| Lineage | `IBM Manta Data Lineage` |
+| Database | `IBM_STACK_1_BRONZE` |
 | Schema | `ADVENTUREWORKS` |
-| Role | `FIVETRAN_ADVENTUREWORKS_ROLE` |
+| Service account | `SVC_DATASTAGE_ADVENTUREWORKS` |
 | Layer | `Bronze` |
 | Environment | `production` |
 
@@ -66,16 +73,18 @@ Contributing factors:
 
 | Asset | Impact |
 |---|---|
-| `fivetran/adventureworks` | Connector sync failed |
-| `AWS_STACK_1_BRONZE.ADVENTUREWORKS` | Bronze tables stale |
-| `_fivetran_synced` freshness | SLA breached |
+| `datastage/adventureworks_ingest` | Ingestion job failed |
+| `IBM_STACK_1_BRONZE.ADVENTUREWORKS` | Bronze tables stale |
+| `ADVENTUREWORKS.ORDERS` | Not refreshed |
+| `ADVENTUREWORKS.CUSTOMERS` | Not refreshed |
+| Source freshness SLA | Breached |
 
 ### Downstream models impacted
 
-| Layer | Model | Impact |
+| Layer | Asset | Impact |
 |---|---|---|
-| Staging | `stg_adventureworks__orders` | Stale order data |
-| Staging | `stg_adventureworks__customers` | Stale customer data |
+| Staging | `stg_adventureworks_orders` | Stale order data |
+| Staging | `stg_adventureworks_customers` | Stale customer data |
 | Intermediate | `int_sales_order_enriched` | Incomplete or stale enrichment |
 | Mart | `fct_sales` | Stale revenue metrics |
 | Mart | `dim_customer` | Stale customer attributes |
@@ -84,10 +93,49 @@ Contributing factors:
 
 | Check | Expected | Actual |
 |---|---|---|
-| `source_freshness_adventureworks_orders` | Source data refreshed within 2 hours | Failed |
+| `freshness_adventureworks_orders` | Source data refreshed within 2 hours | Failed |
 | `row_count_anomaly_fct_sales` | Row count within expected range | Failed or at risk |
 | `not_null_orders_order_id` | Passing | At risk due stale upstream |
-| `relationships_sales_customer` | Passing | At risk due stale upstream |
+| `referential_integrity_sales_customer` | Passing | At risk due stale upstream |
+| `schema_contract_adventureworks_orders` | Schema matches contract | At risk due incomplete ingestion |
+
+---
+
+## IBM product context synthesized
+
+### IBM Knowledge Catalog
+
+The registered data contract for `adventureworks.orders` defines:
+
+- Required fields
+- Primary key expectations
+- Freshness SLA
+- Data owner
+- Technical owner
+- Critical downstream consumers
+
+### IBM Databand
+
+IBM Databand detected:
+
+- Failed DataStage job execution
+- Freshness SLA breach
+- Abnormal row-count behavior in downstream assets
+- Delayed completion of dependent pipelines
+
+### IBM Manta Data Lineage
+
+IBM Manta Data Lineage identified downstream assets impacted by stale source tables:
+
+- Staging transformations
+- Sales fact table
+- Customer dimension
+- Executive dashboards
+- Finance reporting workflows
+
+### IBM watsonx.governance
+
+The incident increases governance risk because certified business metrics may be generated from stale or incomplete data.
 
 ---
 
@@ -100,6 +148,7 @@ Primary impacted teams:
 - Sales Leadership
 - Customer Success Operations
 - Executive Reporting Consumers
+- Data Governance
 
 Primary impacted use cases:
 
@@ -108,6 +157,7 @@ Primary impacted use cases:
 - Finance close preparation
 - Customer retention reporting
 - Executive KPI dashboards
+- Certified metric reporting
 
 ---
 
@@ -117,9 +167,13 @@ Primary impacted use cases:
 
 Revenue, sales, and customer reporting may be stale or incomplete. Stakeholders could make business decisions using outdated metrics.
 
+### Governance risk
+
+Certified data products in IBM Knowledge Catalog may no longer meet declared freshness and quality expectations.
+
 ### Operational risk
 
-The same permission regression pattern could affect other Fivetran connectors if Snowflake grants are not codified and validated consistently.
+The same privilege regression pattern could affect other IBM DataStage or IBM Data Replication jobs if Db2 Warehouse grants are not codified and validated consistently.
 
 ### Estimated impact
 
@@ -131,6 +185,7 @@ The same permission regression pattern could affect other Fivetran connectors if
 | Engineering remediation | 2–4 hours |
 | Analyst validation | 2–6 hours |
 | Potential reporting delay | 1 business day |
+| Governance severity | High |
 
 ---
 
@@ -138,11 +193,12 @@ The same permission regression pattern could affect other Fivetran connectors if
 
 Open a remediation PR that:
 
-1. Restores required Snowflake privileges for `FIVETRAN_ADVENTUREWORKS_ROLE`.
-2. Moves the required grants into version-controlled infrastructure.
-3. Adds a CI preflight check that fails when connector privileges are missing.
-4. Updates the AdventureWorks data contract with ownership, freshness SLA, required access, and downstream lineage.
-5. Adds validation steps for source freshness, dbt tests, and dashboard recovery.
+1. Restores required IBM Db2 Warehouse privileges for `SVC_DATASTAGE_ADVENTUREWORKS`.
+2. Moves the required database grants into version-controlled infrastructure.
+3. Adds a CI preflight check that fails when ingestion privileges are missing.
+4. Updates the AdventureWorks data contract metadata for IBM Knowledge Catalog.
+5. Adds validation steps for freshness, data quality, lineage, and dashboard recovery.
+6. Adds observability metadata so IBM Databand alerts route to the correct owning team.
 
 ---
 
@@ -150,44 +206,48 @@ Open a remediation PR that:
 
 ### Phase 1 — Restore service
 
-- [ ] Restore required Snowflake grants for `FIVETRAN_ADVENTUREWORKS_ROLE`
-- [ ] Trigger Fivetran resync for `adventureworks`
+- [ ] Restore required IBM Db2 Warehouse grants for `SVC_DATASTAGE_ADVENTUREWORKS`
+- [ ] Re-run `datastage/adventureworks_ingest`
 - [ ] Confirm bronze tables are updating
-- [ ] Run dbt source freshness checks
-- [ ] Backfill or rerun impacted downstream models
+- [ ] Confirm `ADVENTUREWORKS.ORDERS` and `ADVENTUREWORKS.CUSTOMERS` were refreshed
+- [ ] Run source freshness checks
+- [ ] Backfill or rerun impacted downstream transformations
 
 ### Phase 2 — Validate data quality
 
-- [ ] Validate row counts for `orders`, `customers`, and `sales`
-- [ ] Confirm `_fivetran_synced` is within SLA
-- [ ] Run dbt tests for impacted staging, intermediate, and mart models
+- [ ] Validate row counts for `ORDERS`, `CUSTOMERS`, and `SALES`
+- [ ] Confirm source freshness is within SLA
+- [ ] Run data quality checks against the IBM Knowledge Catalog contract
+- [ ] Validate impacted downstream marts
 - [ ] Confirm dashboards are no longer stale
 - [ ] Notify Finance Analytics and Revenue Operations
 
 ### Phase 3 — Prevent recurrence
 
-- [ ] Add Snowflake grants to version-controlled infrastructure
-- [ ] Add connector permission preflight check in CI
-- [ ] Add required access policy to the data contract
-- [ ] Add lineage-aware incident metadata
-- [ ] Add runbook link for Fivetran/Snowflake access failures
+- [ ] Add Db2 Warehouse grants to version-controlled infrastructure
+- [ ] Add ingestion permission preflight check in CI
+- [ ] Add required access policy to the IBM Knowledge Catalog contract metadata
+- [ ] Add lineage-aware incident metadata from IBM Manta Data Lineage
+- [ ] Add IBM Databand alert routing metadata
+- [ ] Add runbook link for IBM DataStage / Db2 Warehouse access failures
 
 ---
 
 ## Acceptance criteria
 
-- [ ] `fivetran/adventureworks` sync completes successfully in production
-- [ ] `AWS_STACK_1_BRONZE.ADVENTUREWORKS` tables are refreshed
+- [ ] `datastage/adventureworks_ingest` completes successfully in production
+- [ ] `IBM_STACK_1_BRONZE.ADVENTUREWORKS` tables are refreshed
 - [ ] Source freshness checks pass
-- [ ] Downstream dbt models complete successfully
+- [ ] Downstream transformations complete successfully
 - [ ] Impacted dashboards show current data
-- [ ] Snowflake grants are defined in version control
+- [ ] IBM Db2 Warehouse grants are defined in version control
 - [ ] CI fails if required grants are removed
-- [ ] Data contract includes owner, freshness SLA, access policy, and downstream lineage
+- [ ] IBM Knowledge Catalog contract includes owner, freshness SLA, access policy, and downstream lineage
+- [ ] IBM Databand alert includes failed job, failed check, owner, lineage, risk, and recommended remediation
 - [ ] Incident is closed with validation evidence
 
 ---
 
 ## Suggested labels
 
-`incident`, `data-quality`, `snowflake`, `fivetran`, `dbt`, `lineage`, `sev-2`, `needs-remediation`
+`incident`, `data-quality`, `ibm`, `db2-warehouse`, `datastage`, `databand`, `knowledge-catalog`, `lineage`, `sev-2`, `needs-remediation`

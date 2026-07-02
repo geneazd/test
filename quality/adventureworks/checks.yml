@@ -1,0 +1,97 @@
+suite: adventureworks_data_quality
+environment: prod
+observability_product: ibm-databand
+catalog_product: ibm-knowledge-catalog
+lineage_product: ibm-manta-data-lineage
+
+datasets:
+  - name: adventureworks.orders
+    table: IBM_STACK_1_BRONZE.ADVENTUREWORKS.ORDERS
+    owner: finance-analytics
+    technical_owner: data-platform
+    escalation_channel: "#data-platform-oncall"
+
+    checks:
+      - name: freshness_adventureworks_orders
+        type: freshness
+        field: ingestion_timestamp
+        warn_after: 1 hour
+        error_after: 2 hours
+        severity: high
+        description: Source data must be refreshed within the contracted SLA.
+
+      - name: not_null_orders_order_id
+        type: not_null
+        field: order_id
+        severity: high
+
+      - name: unique_orders_order_id
+        type: unique
+        field: order_id
+        severity: high
+
+      - name: not_null_customer_id
+        type: not_null
+        field: customer_id
+        severity: high
+
+      - name: accepted_values_order_status
+        type: accepted_values
+        field: order_status
+        values:
+          - pending
+          - processing
+          - shipped
+          - cancelled
+          - returned
+        severity: medium
+
+      - name: row_count_anomaly_orders
+        type: row_count_anomaly
+        threshold_percent: 20
+        lookback_days: 14
+        severity: high
+
+      - name: schema_contract_adventureworks_orders
+        type: schema_contract
+        contract: contracts/adventureworks/orders.yml
+        severity: high
+
+  - name: adventureworks.sales
+    table: IBM_STACK_1_BRONZE.ADVENTUREWORKS.SALES
+    owner: finance-analytics
+    technical_owner: data-platform
+    escalation_channel: "#data-platform-oncall"
+
+    checks:
+      - name: row_count_anomaly_fct_sales
+        type: row_count_anomaly
+        threshold_percent: 20
+        lookback_days: 14
+        severity: high
+
+      - name: referential_integrity_sales_customer
+        type: referential_integrity
+        field: customer_id
+        references:
+          table: IBM_STACK_1_BRONZE.ADVENTUREWORKS.CUSTOMERS
+          field: customer_id
+        severity: high
+
+alert_routing:
+  default_channel: "#data-platform-oncall"
+  severity_rules:
+    - severity: high
+      notify:
+        - data-platform
+        - finance-analytics
+        - data-governance
+    - severity: medium
+      notify:
+        - data-platform
+
+incident_context:
+  include_lineage: true
+  include_contract: true
+  include_owners: true
+  include_recommended_remediation: true
