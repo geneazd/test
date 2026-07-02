@@ -2,8 +2,6 @@
 """
 data_quality_remediation.py
 
-A practical command-line utility for data quality remediation.
-
 What it does:
 - Reads CSV, TSV, Excel, JSON, or Parquet files
 - Standardizes column names
